@@ -15,47 +15,13 @@ OUTPUTS:
 """
 
 
-rule download:
-    """
-    Downloading sequences and metadata from data.nextstrain.org
-    """
-    output:
-        sequences="data/sequences.fasta.xz",
-        metadata="data/metadata.tsv.gz",
-    params:
-        sequences_url="https://data.nextstrain.org/files/workflows/mpox/sequences.fasta.xz",
-        metadata_url="https://data.nextstrain.org/files/workflows/mpox/metadata.tsv.gz",
-    shell:
-        """
-        curl -fsSL --compressed {params.sequences_url:q} --output {output.sequences}
-        curl -fsSL --compressed {params.metadata_url:q} --output {output.metadata}
-        """
-
-
-rule decompress:
-    """
-    Decompressing sequences and metadata
-    """
-    input:
-        sequences="data/sequences.fasta.xz",
-        metadata="data/metadata.tsv.gz",
-    output:
-        sequences="data/sequences.fasta",
-        metadata="data/metadata.tsv",
-    shell:
-        """
-        gzip --decompress --keep {input.metadata}
-        xz --decompress --keep {input.sequences}
-        """
-
-
 rule filter:
     """
     Removing strains that do not satisfy certain requirements.
     """
     input:
-        sequences="data/sequences.fasta",
-        metadata="data/metadata.tsv",
+        sequences="data/alignment.fasta.xz",
+        metadata="data/metadata.tsv.gz",
         exclude="defaults/exclude_accessions.txt",
     output:
         sequences=build_dir + "/{build_name}/good_sequences.fasta",
@@ -87,113 +53,202 @@ rule filter:
         """
 
 
-rule subsample:
+"""
+The section below until right before rule 'mask' are copied from ncov workflow (e42576) with inputs and outputs modified as needed.
+"""
+
+rule index_sequences:
+    message:
+        """
+        Index sequence composition for faster filtering.
+        """
     input:
-        metadata=build_dir + "/{build_name}/good_metadata.tsv",
+        sequences = build_dir + "/{build_name}/good_sequences.fasta"
     output:
-        strains=build_dir + "/{build_name}/{sample}_strains.txt",
-        log=build_dir + "/{build_name}/{sample}_filter.log",
+        sequence_index = build_dir + "/{build_name}/good_sequence_index.tsv.xz"
+    log:
+        build_dir + "/{build_name}/logs/index_sequences.txt"
+    benchmark:
+        build_dir + "/{build_name}/benchmarks/index_sequences.txt"
+    shell:
+        """
+        augur index \
+            --sequences {input.sequences} \
+            --output {output.sequence_index} 2>&1 | tee {log}
+        """
+
+
+rule subsample:
+    message:
+        """
+        Subsample all sequences by '{wildcards.subsample}' scheme for build '{wildcards.build_name}' with the following parameters:
+
+         - group by: {params.group_by}
+         - sequences per group: {params.sequences_per_group}
+         - subsample max sequences: {params.subsample_max_sequences}
+         - min-date: {params.min_date}
+         - max-date: {params.max_date}
+         - {params.exclude_ambiguous_dates_argument}
+         - exclude: {params.exclude_argument}
+         - include: {params.include_argument}
+         - query: {params.query_argument}
+         - priority: {params.priority_argument}
+        """
+    input:
+        metadata = build_dir + "/{build_name}/good_metadata.tsv",
+        include = config["include"],
+        priorities = get_priorities,
+        exclude = "defaults/exclude_accessions.txt"
+    output:
+        strains=build_dir + "/{build_name}/sample-{subsample}.txt",
+    log:
+        build_dir + "/{build_name}/logs/subsample_{build_name}_{subsample}.txt"
+    benchmark:
+        build_dir + "/{build_name}/benchmarks/subsample_{build_name}_{subsample}.txt"
     params:
-        group_by=lambda w: config["subsample"][w.sample]["group_by"],
-        sequences_per_group=lambda w: config["subsample"][w.sample][
-            "sequences_per_group"
-        ],
-        other_filters=lambda w: config["subsample"][w.sample].get("other_filters", ""),
-        exclude=lambda w: (
-            f"--exclude-where {' '.join([f'lineage={l}' for l in config['subsample'][w.sample]['exclude_lineages']])}"
-            if "exclude_lineages" in config["subsample"][w.sample]
-            else ""
-        ),
+        group_by = _get_specific_subsampling_setting("group_by", optional=True),
+        group_by_weights = _get_specific_subsampling_setting("group_by_weights", optional=True),
+        sequences_per_group = _get_specific_subsampling_setting("seq_per_group", optional=True),
+        subsample_max_sequences = _get_specific_subsampling_setting("max_sequences", optional=True),
+        sampling_scheme = _get_specific_subsampling_setting("sampling_scheme", optional=True),
+        exclude_argument = _get_specific_subsampling_setting("exclude", optional=True),
+        include_argument = _get_specific_subsampling_setting("include", optional=True),
+        query_argument = _get_specific_subsampling_setting("query", optional=True),
+        exclude_ambiguous_dates_argument = _get_specific_subsampling_setting("exclude_ambiguous_dates_by", optional=True),
+        min_date = _get_specific_subsampling_setting("min_date", optional=True),
+        max_date = _get_specific_subsampling_setting("max_date", optional=True),
+        priority_argument = get_priority_argument,
         strain_id=config["strain_id_field"],
     shell:
         """
         augur filter \
             --metadata {input.metadata} \
             --metadata-id-columns {params.strain_id} \
-            --output-strains {output.strains} \
+            --include {input.include} \
+            --exclude {input.exclude} \
+            {params.min_date} \
+            {params.max_date} \
+            {params.exclude_argument} \
+            {params.include_argument} \
+            {params.query_argument} \
+            {params.exclude_ambiguous_dates_argument} \
+            {params.priority_argument} \
             {params.group_by} \
+            {params.group_by_weights} \
             {params.sequences_per_group} \
-            {params.exclude} \
-            {params.other_filters} \
-            --output-log {output.log}
+            {params.subsample_max_sequences} \
+            {params.sampling_scheme} \
+            --output-strains {output.strains} 2>&1 | tee {log}
+        """
+
+
+rule extract_subsampled_sequences:
+    input:
+        alignment=build_dir + "/{build_name}/good_sequences.fasta",
+        metadata=build_dir + "/{build_name}/good_metadata.tsv",
+        sequence_index = rules.index_sequences.output.sequence_index,
+        strains=build_dir + "/{build_name}/sample-{subsample}.txt",
+    output:
+        subsampled_sequences = build_dir + "/{build_name}/sample-{subsample}.fasta",
+    params:
+        strain_id=config["strain_id_field"],
+    log:
+        build_dir + "/{build_name}/logs/extract_subsampled_sequences_{build_name}_{subsample}.txt"
+    benchmark:
+        build_dir + "/{build_name}/benchmarks/extract_subsampled_sequences_{build_name}_{subsample}.txt"
+    shell:
+        """
+        augur filter \
+            --metadata {input.metadata} \
+            --sequences {input.alignment} \
+            --metadata-id-columns {params.strain_id} \
+            --sequence-index {input.sequence_index} \
+            --exclude-all \
+            --include {input.strains} \
+            --output-sequences {output.subsampled_sequences} 2>&1 | tee {log}
+        """
+
+
+rule proximity_score:
+    message:
+        """
+        determine priority for inclusion in as phylogenetic context by
+        genetic similiarity to sequences in focal set for build '{wildcards.build_name}'.
+        """
+    input:
+        alignment = build_dir + "/{build_name}/good_sequences.fasta",
+        reference = config["reference"],
+        focal_alignment = build_dir + "/{build_name}/sample-{focus}.fasta"
+    output:
+        proximities = build_dir + "/{build_name}/proximity_{focus}.tsv"
+    log:
+        build_dir + "/{build_name}/logs/subsampling_proximity_{build_name}_{focus}.txt"
+    benchmark:
+        build_dir + "/{build_name}/benchmarks/proximity_score_{build_name}_{focus}.txt"
+    params:
+        chunk_size=10000,
+    shell:
+        """
+        python3 scripts/get_distance_to_focal_set.py \
+            --reference {input.reference} \
+            --alignment {input.alignment} \
+            --focal-alignment {input.focal_alignment} \
+            --chunk-size {params.chunk_size} \
+            --output {output.proximities} 2>&1 | tee {log}
+        """
+
+
+rule priority_score:
+    input:
+        proximity = rules.proximity_score.output.proximities,
+        sequence_index = rules.index_sequences.output.sequence_index,
+    output:
+        priorities = build_dir + "/{build_name}/priorities_{focus}.tsv"
+    benchmark:
+        "benchmarks/priority_score_{build_name}_{focus}.txt"
+    params:
+        crowding = config["priorities"]["crowding_penalty"],
+        Nweight = 0.003
+    shell:
+        """
+        python3 scripts/priorities.py \
+            --sequence-index {input.sequence_index} \
+            --proximities {input.proximity} \
+            --crowding-penalty {params.crowding} \
+            --Nweight {params.Nweight} \
+            --output {output.priorities} 2>&1 | tee {log}
         """
 
 
 rule combine_samples:
+    message:
+        """
+        Combine and deduplicate FASTAs
+        _get_unified_alignment will combine all subsampled sequences
+        """
     input:
-        strains=lambda w: [
-            f"{build_dir}/{w.build_name}/{sample}_strains.txt"
-            for sample in config["subsample"]
-        ],
         sequences=build_dir + "/{build_name}/good_sequences.fasta",
         metadata=build_dir + "/{build_name}/good_metadata.tsv",
-        include=config["include"],
+        include=_get_subsampled_files,
     output:
-        sequences=build_dir + "/{build_name}/filtered.fasta",
-        metadata=build_dir + "/{build_name}/metadata.tsv",
+        sequences = build_dir + "/{build_name}/{build_name}_subsampled_sequences.fasta",
+        metadata = build_dir + "/{build_name}/metadata.tsv"
     params:
         strain_id=config["strain_id_field"],
+    log:
+        build_dir + "/{build_name}/logs/subsample_regions_{build_name}.txt"
+    benchmark:
+        build_dir + "/{build_name}/benchmarks/subsample_regions_{build_name}.txt"
     shell:
         """
         augur filter \
+            --sequences {input.sequences} \
+            --metadata {input.metadata} \
             --metadata-id-columns {params.strain_id} \
-            --sequences {input.sequences} \
-            --metadata {input.metadata} \
             --exclude-all \
-            --include {input.strains} {input.include}\
+            --include {input.include} \
             --output-sequences {output.sequences} \
-            --output-metadata {output.metadata}
-        """
-
-
-rule reverse_reverse_complements:
-    input:
-        metadata=build_dir + "/{build_name}/metadata.tsv",
-        sequences=build_dir + "/{build_name}/filtered.fasta",
-    output:
-        build_dir + "/{build_name}/reversed.fasta",
-    shell:
-        """
-        python3 scripts/reverse_reversed_sequences.py \
-            --metadata {input.metadata} \
-            --sequences {input.sequences} \
-            --output {output}
-        """
-
-
-rule align:
-    """
-    Aligning sequences to {input.reference}
-    """
-    input:
-        sequences=build_dir + "/{build_name}/reversed.fasta",
-        reference=config["reference"],
-        genome_annotation=config["genome_annotation"],
-    output:
-        alignment=build_dir + "/{build_name}/aligned.fasta",
-    params:
-        # Alignment params from all-clades nextclade dataset
-        excess_bandwidth=100,
-        terminal_bandwidth=300,
-        window_size=40,
-        min_seed_cover=0.1,
-        allowed_mismatches=8,
-        gap_alignment_side="left",
-    threads: workflow.cores
-    shell:
-        """
-        nextclade3 run \
-            --jobs {threads} \
-            --input-ref {input.reference} \
-            --input-annotation {input.genome_annotation} \
-            --excess-bandwidth {params.excess_bandwidth} \
-            --terminal-bandwidth {params.terminal_bandwidth} \
-            --window-size {params.window_size} \
-            --min-seed-cover {params.min_seed_cover} \
-            --allowed-mismatches {params.allowed_mismatches} \
-            --gap-alignment-side {params.gap_alignment_side} \
-            --output-fasta - \
-            {input.sequences} | seqkit seq -i > {output.alignment}
+            --output-metadata {output.metadata} 2>&1 | tee {log}
         """
 
 
@@ -204,7 +259,7 @@ rule mask:
       - from end: {params.from_end}
     """
     input:
-        sequences=build_dir + "/{build_name}/aligned.fasta",
+        sequences=build_dir + "/{build_name}/{build_name}_subsampled_sequences.fasta",
         mask=config["mask"]["maskfile"],
     output:
         build_dir + "/{build_name}/masked.fasta",
