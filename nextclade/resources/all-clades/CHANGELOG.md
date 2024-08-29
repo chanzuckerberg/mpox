@@ -1,5 +1,17 @@
 ## Unreleased
 
+## TKTK
+
+- Clade Ia and clade Ib are now distinguished
+- Sequences shared via Genbank since 2024 have been added
+
+## 2024-04-19T07:50:39Z
+
+- New hMPXV-1 lineages B.1.21, B.1.22, and C.1.1 are now included in the dataset. For more information on these lineages, see the [hMPXV-1 lineage definitions PR](https://github.com/mpxv-lineages/lineage-designation/pull/37)
+- The sequences used in the reference trees have been updated to include the latest sequences available in Genbank as of 2024-04-16
+
+## 2024-01-16T20:31:02Z
+
 Initial release of this dataset. This dataset is similar to the v2 dataset [`MPXV/ancestral`](https://github.com/nextstrain/nextclade_data/tree/2023-08-17--15-51-24--UTC/data/datasets/MPXV/references/ancestral/versions/2023-08-01T12%3A00%3A00Z/files) with some differences.
 
 ### New and changed gene names
