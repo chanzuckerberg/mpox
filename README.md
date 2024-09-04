@@ -1,5 +1,5 @@
 # CZ GEN EPI fork of nextstrain/mpox
-This is a fork of the [Nextstrain/mpox repo](https://github.com/nextstrain/mpox) and its `subsample_by_distance` branch is used in CZ GEN EPI.
+This is a fork of the [Nextstrain/mpox repo](https://github.com/nextstrain/mpox) for use in CZ GEN EPI. The branch `subsample_by_distance` of this fork is used for the mpox tree building workflow in CZ GEN EPI.
 
 This fork exists for two primary reasons:
 1. To provide subsampling with mpox similar to how it is done for SARS-CoV-2. See [here](https://github.com/nextstrain/mpox/commit/6a7ff1fb99fe4fc714e2b90da1d679e4afd65b4b) for related code changes which are present in the `subsample_by_distance` branch.
