@@ -20,8 +20,8 @@ rule filter:
     Removing strains that do not satisfy certain requirements.
     """
     input:
-        sequences="data/alignment.fasta.xz",
-        metadata="data/metadata.tsv.gz",
+        sequences="data/sequences.fasta",
+        metadata="data/metadata.tsv",
         exclude="defaults/exclude_accessions.txt",
     output:
         sequences=build_dir + "/{build_name}/good_sequences.fasta",
