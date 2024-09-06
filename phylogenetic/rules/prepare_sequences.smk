@@ -48,7 +48,7 @@ rule filter:
             {params.exclude_where} \
             --min-date {params.min_date} \
             --min-length {params.min_length} \
-            --query "(QC_rare_mutations == 'good' | QC_rare_mutations == 'mediocre')" \
+            --query "(QC_rare_mutations == 'good' | QC_rare_mutations == 'mediocre' | QC_rare_mutations == '')" \
             --output-log {output.log}
         """
 
